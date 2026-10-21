@@ -1,9 +1,9 @@
-"""DAG diario: CSV de ventas -> Bronze (Python) -> Silver/Gold (dbt) con tests de calidad."""
+"""DAG diario: transactions_raw.csv -> Bronze (Python) -> Silver/Gold (dbt) con tests de calidad."""
 from __future__ import annotations
 
 import csv
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from airflow import DAG
@@ -11,45 +11,53 @@ from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-RAW_DIR = Path(os.environ.get("RAW_DATA_DIR", "/opt/airflow/data/raw"))
+RAW_FILE = Path(os.environ.get("RAW_DATA_DIR", "/opt/airflow/data/raw")) / "transactions_raw.csv"
 DBT_DIR = os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt_project")
 DBT_CMD = f"cd {DBT_DIR} && dbt"  # profiles.yml vive en el mismo directorio
 DBT_FLAGS = "--profiles-dir ."
 
-BRONZE_COLUMNS = [
-    "order_id", "order_date", "customer_id", "product",
-    "quantity", "unit_price", "currency", "status",
-]
+# Todo llega como string; el tipado se hace en Silver.
+BRONZE_COLUMNS = ["transaction_id", "customer_id", "transaction_date", "amount", "status", "country_code"]
 
 
 def ingest_bronze(ds: str, **_) -> int:
-    """Carga el CSV del dia tal cual viene (todo texto) en bronze.raw_sales.
+    """Carga transactions_raw.csv tal cual en bronze.raw_transactions.
 
-    Idempotente: borra lo ya cargado para ese archivo antes de insertar.
+    Bronze es append-only y esta particionada por fecha de ingesta (_ingestion_date): cada dia
+    escribe su propia particion. Reintentar el mismo dia reemplaza solo la particion de ese dia.
     """
-    path = RAW_DIR / f"sales_{ds}.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"No existe el archivo esperado: {path}")
+    if not RAW_FILE.exists():
+        raise FileNotFoundError(f"No existe el archivo esperado: {RAW_FILE}")
 
-    with path.open(newline="", encoding="utf-8") as f:
-        rows = [[r.get(c) for c in BRONZE_COLUMNS] for r in csv.DictReader(f)]
+    ingestion_date = date.fromisoformat(ds)
+    partition = f"bronze.raw_transactions_{ingestion_date:%Y%m%d}"  # derivado de una fecha validada
+
+    with RAW_FILE.open(newline="", encoding="utf-8") as f:
+        rows = [[r.get(c) for c in BRONZE_COLUMNS] + [RAW_FILE.name, ds] for r in csv.DictReader(f)]
 
     hook = PostgresHook(postgres_conn_id="warehouse")
     hook.run("CREATE SCHEMA IF NOT EXISTS bronze")
     hook.run(
         """
-        CREATE TABLE IF NOT EXISTS bronze.raw_sales (
-            order_id text, order_date text, customer_id text, product text,
-            quantity text, unit_price text, currency text, status text,
-            _source_file text, _ingested_at timestamptz DEFAULT now()
-        )
+        CREATE TABLE IF NOT EXISTS bronze.raw_transactions (
+            transaction_id text, customer_id text, transaction_date text,
+            amount text, status text, country_code text,
+            _source_file text,
+            _ingestion_date date NOT NULL,
+            _ingested_at timestamptz NOT NULL DEFAULT now()
+        ) PARTITION BY RANGE (_ingestion_date)
         """
     )
-    hook.run("DELETE FROM bronze.raw_sales WHERE _source_file = %s", parameters=(path.name,))
+    hook.run(
+        f"CREATE TABLE IF NOT EXISTS {partition} PARTITION OF bronze.raw_transactions "
+        "FOR VALUES FROM (%s) TO (%s)",
+        parameters=(ingestion_date, ingestion_date + timedelta(days=1)),
+    )
+    hook.run(f"TRUNCATE {partition}")
     hook.insert_rows(
-        table="bronze.raw_sales",
-        rows=[r + [path.name] for r in rows],
-        target_fields=BRONZE_COLUMNS + ["_source_file"],
+        table="bronze.raw_transactions",
+        rows=rows,
+        target_fields=BRONZE_COLUMNS + ["_source_file", "_ingestion_date"],
     )
     return len(rows)
 
@@ -62,13 +70,13 @@ default_args = {
 
 with DAG(
     dag_id="sales_medallion",
-    description="Pipeline Medallion de ventas diarias (Bronze/Silver/Gold)",
+    description="Pipeline Medallion de transacciones diarias (Bronze/Silver/Gold)",
     start_date=datetime(2025, 1, 1),
     schedule="@daily",
     catchup=False,
     default_args=default_args,
     max_active_runs=1,
-    tags=["medallion", "dbt", "sales"],
+    tags=["medallion", "dbt", "transactions"],
 ) as dag:
     bronze = PythonOperator(task_id="ingest_bronze", python_callable=ingest_bronze)
 

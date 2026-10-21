@@ -1,24 +1,35 @@
 version: 2
 
 models:
-  - name: silver_sales
-    description: Ventas limpias, tipadas y sin duplicados por order_id.
+  - name: silver_typed_transactions
+    description: Bronze tipado y normalizado, sin descartar filas.
+
+  - name: quarantine_transactions
+    description: Filas rechazadas con su motivo (TEST, monto nulo o negativo, sin id, fecha invalida).
     columns:
-      - name: order_id
-        tests: [unique, not_null]
-      - name: order_date
-        tests: [not_null]
-      - name: quantity
+      - name: quarantine_reason
         tests:
           - not_null
-          - dbt_utils_free_positive
-      - name: unit_price
-        tests: [not_null]
-      - name: currency
-        tests:
           - accepted_values:
-              values: ["ARS", "USD", "EUR"]
+              values:
+                - test_status
+                - null_or_invalid_amount
+                - negative_amount
+                - missing_transaction_id
+                - invalid_transaction_date
+
+  - name: silver_transactions
+    description: Transacciones validas, tipadas y sin duplicados por (transaction_id, transaction_date).
+    columns:
+      - name: transaction_id
+        tests: [not_null]
+      - name: transaction_date
+        tests: [not_null]
+      - name: amount
+        tests: [not_null]
       - name: status
         tests:
           - accepted_values:
-              values: ["COMPLETED", "CANCELLED", "REFUNDED"]
+              values: ["COMPLETED", "PENDING", "CANCELLED"]
+      - name: country_code
+        tests: [not_null]
