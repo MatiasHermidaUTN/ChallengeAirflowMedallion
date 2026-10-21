@@ -1,10 +1,17 @@
 version: 2
 
 models:
-  - name: gold_daily_sales
-    description: Agregacion diaria de ventas completadas por moneda y producto.
+  - name: gold_daily_country_metrics
+    description: Metricas diarias por pais (facturacion, ticket promedio, transacciones unicas, % canceladas).
     columns:
-      - name: order_date
+      - name: transaction_date
         tests: [not_null]
-      - name: revenue
+      - name: country_code
         tests: [not_null]
+      - name: total_billed
+        tests: [not_null]
+      - name: unique_transactions
+        tests: [not_null]
+      - name: cancelled_pct
+        tests:
+          - not_null
