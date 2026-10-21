@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: silver_sales
+    description: Ventas limpias, tipadas y sin duplicados por order_id.
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+      - name: order_date
+        tests: [not_null]
+      - name: quantity
+        tests:
+          - not_null
+          - dbt_utils_free_positive
+      - name: unit_price
+        tests: [not_null]
+      - name: currency
+        tests:
+          - accepted_values:
+              values: ["ARS", "USD", "EUR"]
+      - name: status
+        tests:
+          - accepted_values:
+              values: ["COMPLETED", "CANCELLED", "REFUNDED"]

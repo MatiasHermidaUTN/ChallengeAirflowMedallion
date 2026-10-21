@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: bronze
+    tables:
+      - name: raw_sales
+        description: CSV de ventas tal cual llega (todo texto) mas metadatos de carga.
+        columns:
+          - name: order_id
+          - name: _source_file

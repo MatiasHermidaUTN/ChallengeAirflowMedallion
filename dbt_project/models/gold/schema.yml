@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: gold_daily_sales
+    description: Agregacion diaria de ventas completadas por moneda y producto.
+    columns:
+      - name: order_date
+        tests: [not_null]
+      - name: revenue
+        tests: [not_null]
